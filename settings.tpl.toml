@@ -1,0 +1,18 @@
+# Arkade P2P Daemon config
+[daemon]
+host = "127.0.0.1"
+port = 9100
+# Solo escuchar en localhost por defecto.
+# Orígenes del navegador permitidos (coma separada). Sobrescribe con la
+# variable de entorno DAEMON_ALLOWED_ORIGINS; incluye el origen que sirve la UI.
+# allowedOrigins = ["http://localhost:5173", "https://tu-usuario.github.io"]
+
+[nostr]
+relays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"]
+
+[arkade]
+network = "mutinynet"
+
+[wallet]
+# Ruta donde guardar la wallet del daemon (fuera del navegador)
+path = "./data/wallet.json"
