@@ -4,6 +4,8 @@ import { finalizeEvent } from "nostr-tools/pure";
 import type { Event, EventTemplate, UnsignedEvent } from "nostr-tools/pure";
 import { unwrapEvent, wrapManyEvents } from "nostr-tools/nip59";
 import { decrypt as nip44Decrypt, encrypt as nip44Encrypt, getConversationKey } from "nostr-tools/nip44";
+import { SingleKey, Transaction } from "@arkade-os/sdk";
+import { base64 } from "@scure/base";
 import { createMnemonic, deriveFromMnemonic } from "../utils/mnemonic.js";
 import { encryptKeystore, decryptKeystore, type EncryptedBlob, type KeystoreData } from "../utils/keystore.js";
 
@@ -13,6 +15,7 @@ export class Wallet {
   status: WalletStatus = "uninitialized";
   private identity!: ReturnType<typeof deriveFromMnemonic>;
   private keystoreData?: KeystoreData;
+  private arkSigner?: SingleKey;
 
   constructor(private path: string) {}
 
@@ -39,6 +42,7 @@ export class Wallet {
     writeFileSync(this.getEncPath(), JSON.stringify(blob, null, 2));
     this.keystoreData = keystoreData;
     this.identity = deriveFromMnemonic(mnemonic);
+    this.arkSigner = undefined;
     this.status = "unlocked";
     console.log("[wallet] created new wallet, npub:", this.identity.npub);
     return { mnemonic, npub: this.identity.npub, pk: this.identity.pk };
@@ -50,6 +54,7 @@ export class Wallet {
     writeFileSync(this.getEncPath(), JSON.stringify(blob, null, 2));
     this.keystoreData = keystoreData;
     this.identity = deriveFromMnemonic(mnemonic);
+    this.arkSigner = undefined;
     this.status = "unlocked";
     console.log("[wallet] imported wallet, npub:", this.identity.npub);
     return { npub: this.identity.npub, pk: this.identity.pk };
@@ -62,6 +67,7 @@ export class Wallet {
     const data = decryptKeystore(blob, passphrase);
     this.keystoreData = data;
     this.identity = deriveFromMnemonic(data.mnemonic);
+    this.arkSigner = undefined;
     this.status = "unlocked";
     console.log("[wallet] unlocked, npub:", this.identity.npub);
     return { npub: this.identity.npub, pk: this.identity.pk };
@@ -77,7 +83,55 @@ export class Wallet {
 
   getIdentity() {
     if (this.status !== "unlocked") throw new Error("Wallet locked");
-    return { pk: this.identity.pk, npub: this.identity.npub };
+    return {
+      pk: this.identity.pk,
+      compressedPk: this.identity.compressedPk,
+      npub: this.identity.npub,
+    };
+  }
+
+  private getArkSigner() {
+    if (this.status !== "unlocked") throw new Error("Wallet locked");
+    if (!this.arkSigner) {
+      this.arkSigner = SingleKey.fromPrivateKey(this.getSigningKey());
+    }
+    return this.arkSigner;
+  }
+
+  /** Sign one base64 PSBT and return the base64 result. */
+  async signPsbt(psbt: string, inputIndexes?: number[]): Promise<string> {
+    const signer = this.getArkSigner();
+    const tx = Transaction.fromPSBT(base64.decode(psbt));
+    const signed = await signer.sign(tx, inputIndexes);
+    return base64.encode(signed.toPSBT());
+  }
+
+  /** Sign several base64 PSBTs in order, preserving existing signatures. */
+  async signPsbts(psbts: string[], inputIndexes?: number[][]): Promise<string[]> {
+    const signer = this.getArkSigner();
+    const signed = await Promise.all(
+      psbts.map(async (psbt, index) => {
+        const tx = Transaction.fromPSBT(base64.decode(psbt));
+        const result = await signer.sign(tx, inputIndexes?.[index]);
+        return base64.encode(result.toPSBT());
+      }),
+    );
+    return signed;
+  }
+
+  async signMessage(message: string, signatureType: "schnorr" | "ecdsa" = "schnorr"): Promise<string> {
+    const signature = await this.getArkSigner().signMessage(
+      base64.decode(message),
+      signatureType,
+    );
+    return base64.encode(signature);
+  }
+
+  async signSchnorrDeterministic(messageHash: string): Promise<string> {
+    const signature = await this.getArkSigner().signSchnorrDeterministic(
+      base64.decode(messageHash),
+    );
+    return base64.encode(signature);
   }
 
   getStatus() {

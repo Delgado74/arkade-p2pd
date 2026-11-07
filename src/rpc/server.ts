@@ -96,6 +96,29 @@ export async function startRpc(config: Config, wallet?: Wallet) {
               }
               send(ws, msg.id, wallet.nip44Decrypt(msg.params.sender, msg.params.payload));
               return;
+            case "ark.getPublicKey":
+              send(ws, msg.id, wallet.getIdentity());
+              return;
+            case "ark.signPsbt":
+              if (typeof msg.params?.psbt !== "string") throw new Error("psbt required");
+              send(ws, msg.id, await wallet.signPsbt(msg.params.psbt, msg.params.inputIndexes));
+              return;
+            case "ark.signPsbts":
+              if (!Array.isArray(msg.params?.psbts)) throw new Error("psbts required");
+              send(ws, msg.id, await wallet.signPsbts(msg.params.psbts, msg.params.inputIndexes));
+              return;
+            case "ark.signMessage":
+              if (typeof msg.params?.message !== "string") throw new Error("message required");
+              send(
+                ws,
+                msg.id,
+                await wallet.signMessage(msg.params.message, msg.params.signatureType),
+              );
+              return;
+            case "ark.signSchnorrDeterministic":
+              if (typeof msg.params?.messageHash !== "string") throw new Error("messageHash required");
+              send(ws, msg.id, await wallet.signSchnorrDeterministic(msg.params.messageHash));
+              return;
             default:
               throw new Error(`unknown method: ${msg.method}`);
           }
