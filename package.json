@@ -9,7 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "lint": "oxlint src",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/db/messages.test.ts src/db/relays.test.ts src/db/outbox.test.ts src/nostr/relayPool.test.ts"
   },
   "dependencies": {
     "@arkade-os/sdk": "^0.4.79",

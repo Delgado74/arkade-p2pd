@@ -23,10 +23,14 @@ un RPC WebSocket en `127.0.0.1` para que el cliente web nunca maneje secretos.
 - `src/db/`: SQLite + Drizzle. Esquema completo (`operations`, `messages`,
   `escrows`, `disputes`, `ratings`, `relays`, `outbox`, `cursors`, `settings`),
   migraciones versionadas en `src/db/migrations.ts` e inicialización en
-  `openDb()`. El repositorio de operaciones vive en `src/db/operations.ts`.
+  `openDb()`. Repositorios: `operations.ts`, `messages.ts`, `relays.ts` y
+  `outbox.ts`.
 - `src/escrow/`: tipos y validación de acuerdos de escrow.
-- `src/nostr/`, `src/trading/`, `src/recovery/`: esqueletos de servicios del
-  daemon; hoy principalmente logging/arranque.
+- `src/nostr/`: pool de relays propio (`relayPool.ts`) con reconexión, backoff,
+  deduplicación, suscripciones estables y `OK` por relay; el servicio (`index.ts`)
+  persiste salud de relays, mensajes y la cola de salida.
+- `src/trading/`, `src/recovery/`: esqueletos de servicios del daemon; hoy
+  principalmente logging/arranque.
 
 ## Comandos
 
@@ -37,16 +41,17 @@ npm run build      # tsc -p tsconfig.json
 npm start          # node dist/main.js
 npm run typecheck  # tsc --noEmit
 npm run lint       # oxlint src
+npm test           # node --test con tsx
 ```
 
 Antes de cerrar un cambio ejecutar:
 
 ```bash
-npm run typecheck && npm run lint && npm run build
+npm run typecheck && npm run lint && npm run build && npm test
 ```
 
-No hay suite de tests propia todavía; si se añade, documentar el comando aquí y
-en `package.json`.
+Los tests cubren repositorios de DB (`src/db/*.test.ts`) y helpers del pool de
+relays (`src/nostr/*.test.ts`).
 
 ## Configuración
 
@@ -76,9 +81,14 @@ Métodos principales en `src/rpc/server.ts`:
 - `operations.list` (`limit`), `operations.get` (`orderId`)
 - `operations.upsert` (`orderId`, `patch`), `operations.delete` (`orderId`)
 - `operations.import` (`operations[]`, idempotente: las filas existentes ganan)
+- `messages.list` (`orderId?`, `limit?`), `messages.upsert` (`id`, `patch`)
+- `messages.delete` (`id`), `messages.import` (`messages[]`, idempotente)
+- `relays.list`
+- `nostr.publish` (`event` firmado; encola en el outbox y publica por el pool)
 
-Los métodos `operations.*` no requieren wallet desbloqueada; solo la DB. El
-resto sí requiere wallet disponible.
+Los métodos `operations.*`, `messages.*` y `relays.list` no requieren wallet
+desbloqueada; solo la DB. `nostr.publish` tampoco firma: recibe el evento ya
+firmado. El resto sí requiere wallet disponible.
 
 Mantener los nombres y formas de parámetros sincronizados con
 `arkade-p2p-nostr/src/lib/daemon/client.ts` e `identity.ts`.

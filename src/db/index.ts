@@ -22,11 +22,12 @@ export interface OpenedDb {
  * and `npm run dev` use the same file.
  */
 export function openDb(path = "./data/daemon.db"): OpenedDb {
-  const file = resolve(process.cwd(), path);
-  mkdirSync(dirname(file), { recursive: true });
+  const inMemory = path === ":memory:";
+  const file = inMemory ? path : resolve(process.cwd(), path);
+  if (!inMemory) mkdirSync(dirname(file), { recursive: true });
 
   const sqlite = new Database(file);
-  sqlite.pragma("journal_mode = WAL");
+  if (!inMemory) sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
   sqlite.pragma("busy_timeout = 5000");
 
@@ -45,3 +46,27 @@ export { schema };
 export { SCHEMA_VERSION } from "./migrations.js";
 export { listOperations, getOperation, recordOperation, deleteOperation, importOperations } from "./operations.js";
 export type { OperationRecord, OperationPatch, OperationImportResult } from "./operations.js";
+export {
+  listMessages,
+  getMessage,
+  recordMessage,
+  deleteMessage,
+  importMessages,
+  listOrderMessages,
+} from "./messages.js";
+export type { StoredMessage, MessageImportResult } from "./messages.js";
+export {
+  seedRelays,
+  listRelays,
+  enabledRelayUrls,
+  updateRelayStatus,
+  setRelayEnabled,
+} from "./relays.js";
+export type { RelayRecord, RelayConnectionStatus } from "./relays.js";
+export {
+  enqueueOutbox,
+  listDueOutbox,
+  markOutboxSent,
+  markOutboxFailed,
+} from "./outbox.js";
+export type { OutboxEntry, OutboxStatus } from "./outbox.js";

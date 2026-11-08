@@ -11,7 +11,30 @@ import {
   operationPatchSchema,
   recordOperation,
 } from "../db/operations.js";
+import {
+  deleteMessage,
+  importMessages,
+  listMessages,
+  messageImportSchema,
+  messagePatchSchema,
+  recordMessage,
+} from "../db/messages.js";
+import { listRelays } from "../db/relays.js";
+import type { Nostr } from "../nostr/index.js";
 import type { Wallet } from "../wallet/index.js";
+
+const hex64 = z.string().regex(/^[0-9a-f]{64}$/i);
+const eventSchema = z
+  .object({
+    id: hex64,
+    pubkey: hex64,
+    created_at: z.number().int().min(0),
+    kind: z.number().int().min(0).max(65535),
+    tags: z.array(z.array(z.string())),
+    content: z.string(),
+    sig: z.string().regex(/^[0-9a-f]{128}$/i),
+  })
+  .strict();
 
 function send(ws: WebSocket, id: unknown, result: unknown) {
   ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
@@ -30,7 +53,7 @@ function fail(ws: WebSocket, id: unknown, error: unknown) {
   ws.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }));
 }
 
-export async function startRpc(config: Config, wallet?: Wallet, db?: Db) {
+export async function startRpc(config: Config, wallet?: Wallet, db?: Db, nostr?: Nostr) {
   const allowedOrigins = config.daemon.allowedOrigins;
   const wss = new WebSocketServer({
     host: config.daemon.host,
@@ -114,26 +137,89 @@ export async function startRpc(config: Config, wallet?: Wallet, db?: Db) {
             }
           }
 
+          if (msg.method?.startsWith("messages.")) {
+            if (!db) throw new Error("database unavailable");
+            switch (msg.method) {
+              case "messages.list": {
+                const orderId = msg.params?.orderId;
+                if (orderId !== undefined && typeof orderId !== "string") {
+                  throw new Error("orderId must be a string");
+                }
+                const limit = msg.params?.limit;
+                if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+                  throw new Error("limit must be a positive integer");
+                }
+                send(ws, msg.id, listMessages(db, { orderId, limit }));
+                return;
+              }
+              case "messages.upsert": {
+                if (typeof msg.params?.id !== "string" || msg.params.id.length === 0) {
+                  throw new Error("id required");
+                }
+                const patch = messagePatchSchema.parse(msg.params?.patch ?? {});
+                send(ws, msg.id, recordMessage(db, msg.params.id, patch));
+                return;
+              }
+              case "messages.delete": {
+                if (typeof msg.params?.id !== "string") throw new Error("id required");
+                send(ws, msg.id, { deleted: deleteMessage(db, msg.params.id) });
+                return;
+              }
+              case "messages.import": {
+                if (!Array.isArray(msg.params?.messages)) {
+                  throw new Error("messages array required");
+                }
+                const records = z.array(messageImportSchema).parse(msg.params.messages);
+                send(ws, msg.id, importMessages(db, records));
+                return;
+              }
+              default:
+                throw new Error(`unknown method: ${msg.method}`);
+            }
+          }
+
+          if (msg.method === "relays.list") {
+            send(ws, msg.id, db ? listRelays(db) : (nostr?.status() ?? []));
+            return;
+          }
+
+          if (msg.method === "nostr.publish") {
+            if (!nostr) throw new Error("nostr unavailable");
+            const event = eventSchema.parse(msg.params?.event);
+            await nostr.publish(event);
+            send(ws, msg.id, { id: event.id });
+            return;
+          }
+
           if (!wallet) throw new Error("wallet unavailable");
 
           switch (msg.method) {
             case "wallet.status":
               send(ws, msg.id, wallet.getStatus());
               return;
-            case "wallet.create":
+            case "wallet.create": {
               if (!msg.params?.passphrase) throw new Error("passphrase required");
-              send(ws, msg.id, wallet.create(msg.params.passphrase));
+              const result = wallet.create(msg.params.passphrase);
+              nostr?.startForIdentity(wallet);
+              send(ws, msg.id, result);
               return;
-            case "wallet.import":
+            }
+            case "wallet.import": {
               if (!msg.params?.mnemonic || !msg.params?.passphrase) {
                 throw new Error("mnemonic and passphrase required");
               }
-              send(ws, msg.id, wallet.import(msg.params.mnemonic, msg.params.passphrase));
+              const result = wallet.import(msg.params.mnemonic, msg.params.passphrase);
+              nostr?.startForIdentity(wallet);
+              send(ws, msg.id, result);
               return;
-            case "wallet.unlock":
+            }
+            case "wallet.unlock": {
               if (!msg.params?.passphrase) throw new Error("passphrase required");
-              send(ws, msg.id, wallet.unlock(msg.params.passphrase));
+              const result = wallet.unlock(msg.params.passphrase);
+              nostr?.startForIdentity(wallet);
+              send(ws, msg.id, result);
               return;
+            }
             case "wallet.getIdentity":
             case "nostr.getIdentity":
               send(ws, msg.id, wallet.getIdentity());
