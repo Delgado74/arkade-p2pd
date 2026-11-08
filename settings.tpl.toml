@@ -10,6 +10,10 @@ port = 9100
 [nostr]
 relays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"]
 
+[db]
+# Archivo SQLite del daemon. Sobrescribe con DAEMON_DB_PATH.
+path = "./data/daemon.db"
+
 [arkade]
 network = "mutinynet"
 

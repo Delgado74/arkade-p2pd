@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 export interface Config {
   daemon: { host: string; port: number; allowedOrigins: string[] };
+  db: { path: string };
   nostr: { relays: string[] };
   arkade: { network: string };
   wallet: { path: string };
@@ -22,6 +23,7 @@ const defaults: Config = {
       "https://delgado74.github.io",
     ],
   },
+  db: { path: "./data/daemon.db" },
   nostr: { relays: ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"] },
   arkade: { network: "mutinynet" },
   wallet: { path: "./data/wallet.json" },
@@ -37,6 +39,9 @@ function withEnv(config: Config): Config {
       ...config.daemon,
       ...(origins && origins.length > 0 ? { allowedOrigins: origins } : {}),
     },
+    db: {
+      path: process.env.DAEMON_DB_PATH?.trim() || config.db.path,
+    },
   };
 }
 
@@ -46,7 +51,7 @@ export function loadConfig(): Config {
     return withEnv(defaults);
   }
   try {
-    const raw = readFileSync(path, "utf8");
+    readFileSync(path, "utf8");
     // Minimal parser - replace with toml later if needed
     return withEnv({ ...defaults });
   } catch {
