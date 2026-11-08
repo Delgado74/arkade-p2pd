@@ -1,5 +1,16 @@
 import { WebSocketServer, type WebSocket } from "ws";
+import { z } from "zod";
 import type { Config } from "../config/index.js";
+import type { Db } from "../db/index.js";
+import {
+  deleteOperation,
+  getOperation,
+  importOperations,
+  listOperations,
+  operationImportSchema,
+  operationPatchSchema,
+  recordOperation,
+} from "../db/operations.js";
 import type { Wallet } from "../wallet/index.js";
 
 function send(ws: WebSocket, id: unknown, result: unknown) {
@@ -7,12 +18,19 @@ function send(ws: WebSocket, id: unknown, result: unknown) {
 }
 
 function fail(ws: WebSocket, id: unknown, error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message =
+    error instanceof z.ZodError
+      ? error.issues
+          .map((issue) => `${issue.path.join(".") || "params"}: ${issue.message}`)
+          .join("; ")
+      : error instanceof Error
+        ? error.message
+        : String(error);
   const code = /locked/i.test(message) ? -32001 : /not found|unknown method/i.test(message) ? -32601 : -32000;
   ws.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }));
 }
 
-export async function startRpc(config: Config, wallet?: Wallet) {
+export async function startRpc(config: Config, wallet?: Wallet, db?: Db) {
   const allowedOrigins = config.daemon.allowedOrigins;
   const wss = new WebSocketServer({
     host: config.daemon.host,
@@ -42,6 +60,60 @@ export async function startRpc(config: Config, wallet?: Wallet) {
         }
 
         try {
+          if (msg.method?.startsWith("operations.")) {
+            if (!db) throw new Error("database unavailable");
+            switch (msg.method) {
+              case "operations.list": {
+                const limit = msg.params?.limit;
+                if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+                  throw new Error("limit must be a positive integer");
+                }
+                send(ws, msg.id, listOperations(db, limit));
+                return;
+              }
+              case "operations.get": {
+                if (typeof msg.params?.orderId !== "string") {
+                  throw new Error("orderId required");
+                }
+                send(ws, msg.id, getOperation(db, msg.params.orderId));
+                return;
+              }
+              case "operations.upsert": {
+                if (typeof msg.params?.orderId !== "string" || msg.params.orderId.length === 0) {
+                  throw new Error("orderId required");
+                }
+                const patch = operationPatchSchema.parse(msg.params?.patch ?? {});
+                send(ws, msg.id, recordOperation(db, msg.params.orderId, patch));
+                return;
+              }
+              case "operations.delete": {
+                if (typeof msg.params?.orderId !== "string") {
+                  throw new Error("orderId required");
+                }
+                send(ws, msg.id, { deleted: deleteOperation(db, msg.params.orderId) });
+                return;
+              }
+              case "operations.import": {
+                if (!Array.isArray(msg.params?.operations)) {
+                  throw new Error("operations array required");
+                }
+                const now = Math.floor(Date.now() / 1000);
+                const records = z
+                  .array(operationImportSchema)
+                  .parse(msg.params.operations)
+                  .map((record) => ({
+                    ...record,
+                    createdAt: record.createdAt ?? now,
+                    updatedAt: record.updatedAt ?? record.createdAt ?? now,
+                  }));
+                send(ws, msg.id, importOperations(db, records));
+                return;
+              }
+              default:
+                throw new Error(`unknown method: ${msg.method}`);
+            }
+          }
+
           if (!wallet) throw new Error("wallet unavailable");
 
           switch (msg.method) {

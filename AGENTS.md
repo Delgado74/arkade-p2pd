@@ -20,7 +20,10 @@ un RPC WebSocket en `127.0.0.1` para que el cliente web nunca maneje secretos.
 - `src/utils/keystore.ts`: cifrado de keystore con scrypt + AES-256-GCM.
 - `src/utils/crypto.ts`: utilidades criptográficas compartidas.
 - `src/rpc/server.ts`: servidor JSON-RPC WebSocket y allowlist de orígenes.
-- `src/db/`: SQLite + Drizzle; tablas de operaciones.
+- `src/db/`: SQLite + Drizzle. Esquema completo (`operations`, `messages`,
+  `escrows`, `disputes`, `ratings`, `relays`, `outbox`, `cursors`, `settings`),
+  migraciones versionadas en `src/db/migrations.ts` e inicialización en
+  `openDb()`. El repositorio de operaciones vive en `src/db/operations.ts`.
 - `src/escrow/`: tipos y validación de acuerdos de escrow.
 - `src/nostr/`, `src/trading/`, `src/recovery/`: esqueletos de servicios del
   daemon; hoy principalmente logging/arranque.
@@ -48,12 +51,16 @@ en `package.json`.
 ## Configuración
 
 - Copiar `settings.tpl.toml` a `settings.toml` para desarrollo local.
-- `settings.toml`, `data/`, `dist/`, `node_modules/` y logs están ignorados.
+- `settings.toml`, `data/`, `dist/`, `node_modules/`, `.idea/` y logs están
+  ignorados.
 - Variables relevantes:
   - `DAEMON_ALLOWED_ORIGINS`: lista separada por comas; reemplaza los orígenes
     por defecto.
+  - `DAEMON_DB_PATH`: ruta del archivo SQLite; por defecto `./data/daemon.db`.
 - Por defecto el RPC escucha en `ws://127.0.0.1:9100`.
 - La wallet cifrada se guarda junto a `wallet.path` con sufijo `.enc.json`.
+- Al arrancar se aplican las migraciones pendientes y se registran en
+  `schema_migrations`.
 
 ## RPC
 
@@ -66,6 +73,12 @@ Métodos principales en `src/rpc/server.ts`:
 - `ark.getPublicKey`
 - `ark.signPsbt`, `ark.signPsbts`
 - `ark.signMessage`, `ark.signSchnorrDeterministic`
+- `operations.list` (`limit`), `operations.get` (`orderId`)
+- `operations.upsert` (`orderId`, `patch`), `operations.delete` (`orderId`)
+- `operations.import` (`operations[]`, idempotente: las filas existentes ganan)
+
+Los métodos `operations.*` no requieren wallet desbloqueada; solo la DB. El
+resto sí requiere wallet disponible.
 
 Mantener los nombres y formas de parámetros sincronizados con
 `arkade-p2p-nostr/src/lib/daemon/client.ts` e `identity.ts`.

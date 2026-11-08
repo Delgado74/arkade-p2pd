@@ -4,14 +4,23 @@ import { Wallet } from "./wallet/index.js";
 import { Nostr } from "./nostr/index.js";
 import { Trading } from "./trading/index.js";
 import { Recovery } from "./recovery/index.js";
-import { openDb } from "./db/index.js";
+import { openDb, SCHEMA_VERSION } from "./db/index.js";
 
 async function main() {
   const config = loadConfig();
   console.log("[arkade-p2pd] starting...");
   console.log(`[arkade-p2pd] RPC: ws://${config.daemon.host}:${config.daemon.port}`);
 
-  const db = openDb();
+  const { db, path, close } = openDb(config.db.path);
+  console.log(`[arkade-p2pd] db: ${path} (schema v${SCHEMA_VERSION})`);
+
+  const shutdown = () => {
+    close();
+    process.exit(0);
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+
   const wallet = new Wallet(config.wallet.path);
   await wallet.init();
 
@@ -24,7 +33,7 @@ async function main() {
   const recovery = new Recovery();
   await recovery.start();
 
-  await startRpc(config, wallet);
+  await startRpc(config, wallet, db);
   console.log("[arkade-p2pd] ready - status:", wallet.status);
 }
 
