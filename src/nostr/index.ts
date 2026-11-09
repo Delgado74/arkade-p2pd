@@ -16,6 +16,7 @@ import {
 } from "../db/outbox.js";
 import { recordMessage } from "../db/messages.js";
 import type { Wallet } from "../wallet/index.js";
+import { decodeTradeEnvelope } from "../trading/protocol.js";
 import { RelayPool, backoffDelay } from "./relayPool.js";
 
 const OUTBOX_INTERVAL_MS = 15_000;
@@ -110,8 +111,13 @@ export class Nostr {
           if (!this.db) return;
           try {
             const rumor = wallet.unwrapDm(wrap);
+            // Link the DM to its trade order when the plaintext is a valid
+            // trade envelope, so the daemon can rebuild a trade from the DB
+            // without scanning every message.
+            const trade = decodeTradeEnvelope(rumor.content);
             recordMessage(this.db, rumor.id, {
               type: "dm",
+              orderId: trade?.orderId,
               peer: rumor.sender,
               outgoing: rumor.sender === identity.pk,
               createdAt: rumor.createdAt,

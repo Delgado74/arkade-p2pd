@@ -10,7 +10,7 @@
     "start": "node dist/main.js",
     "lint": "oxlint src",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/db/messages.test.ts src/db/relays.test.ts src/db/outbox.test.ts src/db/escrows.test.ts src/db/disputes.test.ts src/db/ratings.test.ts src/db/settings.test.ts src/db/cursors.test.ts src/nostr/relayPool.test.ts"
+    "test": "node --import tsx --test src/db/messages.test.ts src/db/relays.test.ts src/db/outbox.test.ts src/db/escrows.test.ts src/db/disputes.test.ts src/db/ratings.test.ts src/db/settings.test.ts src/db/cursors.test.ts src/trading/protocol.test.ts src/trading/windows.test.ts src/nostr/relayPool.test.ts"
   },
   "dependencies": {
     "@arkade-os/sdk": "^0.4.79",

@@ -28,13 +28,13 @@ async function main() {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 
-  const trading = new Trading();
+  const trading = new Trading(db);
   await trading.start();
 
-  const recovery = new Recovery();
+  const recovery = new Recovery(db);
   await recovery.start();
 
-  await startRpc(config, wallet, db, nostr);
+  await startRpc(config, wallet, db, nostr, trading, recovery);
   console.log("[arkade-p2pd] ready - status:", wallet.status);
 }
 

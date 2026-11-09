@@ -50,6 +50,8 @@ import { deleteSetting, getSetting, listSettings, setSetting } from "../db/setti
 import { deleteCursor, getCursor, listCursors, setCursor } from "../db/cursors.js";
 import type { Nostr } from "../nostr/index.js";
 import type { Wallet } from "../wallet/index.js";
+import type { Trading } from "../trading/index.js";
+import type { Recovery } from "../recovery/index.js";
 
 const hex64 = z.string().regex(/^[0-9a-f]{64}$/i);
 const eventSchema = z
@@ -86,7 +88,14 @@ function fail(ws: WebSocket, id: unknown, error: unknown) {
   ws.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }));
 }
 
-export async function startRpc(config: Config, wallet?: Wallet, db?: Db, nostr?: Nostr) {
+export async function startRpc(
+  config: Config,
+  wallet?: Wallet,
+  db?: Db,
+  nostr?: Nostr,
+  trading?: Trading,
+  recovery?: Recovery,
+) {
   const allowedOrigins = config.daemon.allowedOrigins;
   let connectionSeq = 0;
   const wss = new WebSocketServer({
@@ -477,6 +486,29 @@ export async function startRpc(config: Config, wallet?: Wallet, db?: Db, nostr?:
               off();
             }
             send(ws, msg.id, { closed: Boolean(off) });
+            return;
+          }
+
+          if (msg.method === "trading.status") {
+            send(ws, msg.id, trading?.status() ?? []);
+            return;
+          }
+
+          if (msg.method === "recovery.status") {
+            send(ws, msg.id, recovery?.current() ?? null);
+            return;
+          }
+
+          if (msg.method === "session.state") {
+            send(ws, msg.id, {
+              wallet: wallet?.getStatus() ?? null,
+              relays: db ? listRelays(db) : (nostr?.status() ?? []),
+              operations: db ? listOperations(db, 2000) : [],
+              escrows: db ? listEscrows(db, 2000) : [],
+              disputes: db ? listDisputes(db, 2000) : [],
+              trading: trading?.status() ?? [],
+              recovery: recovery?.current() ?? null,
+            });
             return;
           }
 
