@@ -70,3 +70,56 @@ export {
   markOutboxFailed,
 } from "./outbox.js";
 export type { OutboxEntry, OutboxStatus } from "./outbox.js";
+export {
+  listEscrows,
+  getEscrow,
+  recordEscrow,
+  deleteEscrow,
+  importEscrows,
+  escrowPatchSchema,
+  escrowImportSchema,
+} from "./escrows.js";
+export type {
+  EscrowRecord,
+  EscrowState,
+  EscrowImportRecord,
+  EscrowImportResult,
+} from "./escrows.js";
+export {
+  listDisputes,
+  getDispute,
+  recordDispute,
+  deleteDispute,
+  importDisputes,
+  disputePatchSchema,
+  disputeImportSchema,
+} from "./disputes.js";
+export type {
+  DisputeRecord,
+  DisputeState,
+  DisputeImportRecord,
+  DisputeImportResult,
+} from "./disputes.js";
+export {
+  listRatings,
+  getRating,
+  recordRating,
+  deleteRating,
+  importRatings,
+  ratingSchema,
+} from "./ratings.js";
+export type { RatingRecord, RatingImportResult } from "./ratings.js";
+export {
+  getSetting,
+  setSetting,
+  listSettings,
+  deleteSetting,
+} from "./settings.js";
+export type { SettingRecord } from "./settings.js";
+export {
+  getCursor,
+  setCursor,
+  listCursors,
+  deleteCursor,
+} from "./cursors.js";
+export type { CursorRecord } from "./cursors.js";

@@ -20,6 +20,34 @@ import {
   recordMessage,
 } from "../db/messages.js";
 import { listRelays } from "../db/relays.js";
+import {
+  deleteEscrow,
+  escrowImportSchema,
+  escrowPatchSchema,
+  getEscrow,
+  importEscrows,
+  listEscrows,
+  recordEscrow,
+} from "../db/escrows.js";
+import {
+  deleteDispute,
+  disputeImportSchema,
+  disputePatchSchema,
+  getDispute,
+  importDisputes,
+  listDisputes,
+  recordDispute,
+} from "../db/disputes.js";
+import {
+  deleteRating,
+  getRating,
+  importRatings,
+  listRatings,
+  ratingSchema,
+  recordRating,
+} from "../db/ratings.js";
+import { deleteSetting, getSetting, listSettings, setSetting } from "../db/settings.js";
+import { deleteCursor, getCursor, listCursors, setCursor } from "../db/cursors.js";
 import type { Nostr } from "../nostr/index.js";
 import type { Wallet } from "../wallet/index.js";
 
@@ -185,6 +213,203 @@ export async function startRpc(config: Config, wallet?: Wallet, db?: Db, nostr?:
                 }
                 const records = z.array(messageImportSchema).parse(msg.params.messages);
                 send(ws, msg.id, importMessages(db, records));
+                return;
+              }
+              default:
+                throw new Error(`unknown method: ${msg.method}`);
+            }
+          }
+
+          if (msg.method?.startsWith("escrows.")) {
+            if (!db) throw new Error("database unavailable");
+            switch (msg.method) {
+              case "escrows.list": {
+                const limit = msg.params?.limit;
+                if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+                  throw new Error("limit must be a positive integer");
+                }
+                send(ws, msg.id, listEscrows(db, limit));
+                return;
+              }
+              case "escrows.get": {
+                if (typeof msg.params?.orderId !== "string") {
+                  throw new Error("orderId required");
+                }
+                send(ws, msg.id, getEscrow(db, msg.params.orderId));
+                return;
+              }
+              case "escrows.upsert": {
+                if (typeof msg.params?.orderId !== "string" || msg.params.orderId.length === 0) {
+                  throw new Error("orderId required");
+                }
+                const patch = escrowPatchSchema.parse(msg.params?.patch ?? {});
+                send(ws, msg.id, recordEscrow(db, msg.params.orderId, patch));
+                return;
+              }
+              case "escrows.delete": {
+                if (typeof msg.params?.orderId !== "string") {
+                  throw new Error("orderId required");
+                }
+                send(ws, msg.id, { deleted: deleteEscrow(db, msg.params.orderId) });
+                return;
+              }
+              case "escrows.import": {
+                if (!Array.isArray(msg.params?.escrows)) {
+                  throw new Error("escrows array required");
+                }
+                const records = z.array(escrowImportSchema).parse(msg.params.escrows);
+                send(ws, msg.id, importEscrows(db, records));
+                return;
+              }
+              default:
+                throw new Error(`unknown method: ${msg.method}`);
+            }
+          }
+
+          if (msg.method?.startsWith("disputes.")) {
+            if (!db) throw new Error("database unavailable");
+            switch (msg.method) {
+              case "disputes.list": {
+                const limit = msg.params?.limit;
+                if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+                  throw new Error("limit must be a positive integer");
+                }
+                send(ws, msg.id, listDisputes(db, limit));
+                return;
+              }
+              case "disputes.get": {
+                if (typeof msg.params?.orderId !== "string") {
+                  throw new Error("orderId required");
+                }
+                send(ws, msg.id, getDispute(db, msg.params.orderId));
+                return;
+              }
+              case "disputes.upsert": {
+                if (typeof msg.params?.orderId !== "string" || msg.params.orderId.length === 0) {
+                  throw new Error("orderId required");
+                }
+                const patch = disputePatchSchema.parse(msg.params?.patch ?? {});
+                send(ws, msg.id, recordDispute(db, msg.params.orderId, patch));
+                return;
+              }
+              case "disputes.delete": {
+                if (typeof msg.params?.orderId !== "string") {
+                  throw new Error("orderId required");
+                }
+                send(ws, msg.id, { deleted: deleteDispute(db, msg.params.orderId) });
+                return;
+              }
+              case "disputes.import": {
+                if (!Array.isArray(msg.params?.disputes)) {
+                  throw new Error("disputes array required");
+                }
+                const records = z.array(disputeImportSchema).parse(msg.params.disputes);
+                send(ws, msg.id, importDisputes(db, records));
+                return;
+              }
+              default:
+                throw new Error(`unknown method: ${msg.method}`);
+            }
+          }
+
+          if (msg.method?.startsWith("ratings.")) {
+            if (!db) throw new Error("database unavailable");
+            switch (msg.method) {
+              case "ratings.list": {
+                const { subject, orderId, limit } = msg.params ?? {};
+                if (subject !== undefined && typeof subject !== "string") {
+                  throw new Error("subject must be a string");
+                }
+                if (orderId !== undefined && typeof orderId !== "string") {
+                  throw new Error("orderId must be a string");
+                }
+                if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+                  throw new Error("limit must be a positive integer");
+                }
+                send(ws, msg.id, listRatings(db, { subject, orderId, limit }));
+                return;
+              }
+              case "ratings.get": {
+                if (typeof msg.params?.eventId !== "string") {
+                  throw new Error("eventId required");
+                }
+                send(ws, msg.id, getRating(db, msg.params.eventId));
+                return;
+              }
+              case "ratings.upsert": {
+                const rating = ratingSchema.parse(msg.params?.rating);
+                send(ws, msg.id, recordRating(db, rating));
+                return;
+              }
+              case "ratings.delete": {
+                if (typeof msg.params?.eventId !== "string") {
+                  throw new Error("eventId required");
+                }
+                send(ws, msg.id, { deleted: deleteRating(db, msg.params.eventId) });
+                return;
+              }
+              case "ratings.import": {
+                if (!Array.isArray(msg.params?.ratings)) {
+                  throw new Error("ratings array required");
+                }
+                const records = z.array(ratingSchema).parse(msg.params.ratings);
+                send(ws, msg.id, importRatings(db, records));
+                return;
+              }
+              default:
+                throw new Error(`unknown method: ${msg.method}`);
+            }
+          }
+
+          if (msg.method?.startsWith("settings.")) {
+            if (!db) throw new Error("database unavailable");
+            switch (msg.method) {
+              case "settings.get": {
+                if (typeof msg.params?.key !== "string") throw new Error("key required");
+                send(ws, msg.id, getSetting(db, msg.params.key));
+                return;
+              }
+              case "settings.set": {
+                if (typeof msg.params?.key !== "string" || typeof msg.params?.value !== "string") {
+                  throw new Error("key and value required");
+                }
+                send(ws, msg.id, setSetting(db, msg.params.key, msg.params.value));
+                return;
+              }
+              case "settings.list":
+                send(ws, msg.id, listSettings(db));
+                return;
+              case "settings.delete": {
+                if (typeof msg.params?.key !== "string") throw new Error("key required");
+                send(ws, msg.id, { deleted: deleteSetting(db, msg.params.key) });
+                return;
+              }
+              default:
+                throw new Error(`unknown method: ${msg.method}`);
+            }
+          }
+
+          if (msg.method?.startsWith("cursors.")) {
+            if (!db) throw new Error("database unavailable");
+            switch (msg.method) {
+              case "cursors.get": {
+                if (typeof msg.params?.key !== "string") throw new Error("key required");
+                send(ws, msg.id, getCursor(db, msg.params.key));
+                return;
+              }
+              case "cursors.set": {
+                if (typeof msg.params?.key !== "string" || typeof msg.params?.value !== "string") {
+                  throw new Error("key and value required");
+                }
+                send(ws, msg.id, setCursor(db, msg.params.key, msg.params.value));
+                return;
+              }
+              case "cursors.list":
+                send(ws, msg.id, listCursors(db));
+                return;
+              case "cursors.delete": {
+                if (typeof msg.params?.key !== "string") throw new Error("key required");
+                send(ws, msg.id, { deleted: deleteCursor(db, msg.params.key) });
                 return;
               }
               default:
