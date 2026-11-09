@@ -40,6 +40,11 @@ function send(ws: WebSocket, id: unknown, result: unknown) {
   ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
 }
 
+function notify(ws: WebSocket, method: string, params: unknown) {
+  if (ws.readyState !== ws.OPEN) return;
+  ws.send(JSON.stringify({ jsonrpc: "2.0", method, params }));
+}
+
 function fail(ws: WebSocket, id: unknown, error: unknown) {
   const message =
     error instanceof z.ZodError
@@ -55,6 +60,7 @@ function fail(ws: WebSocket, id: unknown, error: unknown) {
 
 export async function startRpc(config: Config, wallet?: Wallet, db?: Db, nostr?: Nostr) {
   const allowedOrigins = config.daemon.allowedOrigins;
+  let connectionSeq = 0;
   const wss = new WebSocketServer({
     host: config.daemon.host,
     port: config.daemon.port,
@@ -70,7 +76,15 @@ export async function startRpc(config: Config, wallet?: Wallet, db?: Db, nostr?:
   });
 
   wss.on("connection", (ws) => {
+    const connectionId = ++connectionSeq;
+    const subscriptions = new Map<string, () => void>();
+
     ws.send(JSON.stringify({ jsonrpc: "2.0", method: "hello", params: { name: "arkade-p2pd", version: "0.1.0" } }));
+
+    ws.on("close", () => {
+      for (const off of subscriptions.values()) off();
+      subscriptions.clear();
+    });
 
     ws.on("message", (data) => {
       void (async () => {
@@ -188,6 +202,56 @@ export async function startRpc(config: Config, wallet?: Wallet, db?: Db, nostr?:
             const event = eventSchema.parse(msg.params?.event);
             await nostr.publish(event);
             send(ws, msg.id, { id: event.id });
+            return;
+          }
+
+          if (msg.method === "nostr.query") {
+            if (!nostr) throw new Error("nostr unavailable");
+            if (!Array.isArray(msg.params?.filters) || msg.params.filters.length === 0) {
+              throw new Error("filters array required");
+            }
+            const timeoutMs = msg.params?.timeoutMs;
+            if (
+              timeoutMs !== undefined &&
+              (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000)
+            ) {
+              throw new Error("timeoutMs must be an integer between 1 and 60000");
+            }
+            send(ws, msg.id, await nostr.query(msg.params.filters, timeoutMs));
+            return;
+          }
+
+          if (msg.method === "nostr.subscribe") {
+            if (!nostr) throw new Error("nostr unavailable");
+            if (!Array.isArray(msg.params?.filters) || msg.params.filters.length === 0) {
+              throw new Error("filters array required");
+            }
+            const subscriptionId =
+              typeof msg.params?.subscriptionId === "string" && msg.params.subscriptionId
+                ? msg.params.subscriptionId
+                : `sub:${Math.random().toString(36).slice(2)}`;
+            if (subscriptions.has(subscriptionId)) {
+              throw new Error(`subscription already exists: ${subscriptionId}`);
+            }
+            const key = `rpc:${connectionId}:${subscriptionId}`;
+            const off = nostr.subscribe(key, msg.params.filters, (event) => {
+              notify(ws, "nostr.event", { subscriptionId, event });
+            });
+            subscriptions.set(subscriptionId, off);
+            send(ws, msg.id, { subscriptionId });
+            return;
+          }
+
+          if (msg.method === "nostr.unsubscribe") {
+            if (typeof msg.params?.subscriptionId !== "string") {
+              throw new Error("subscriptionId required");
+            }
+            const off = subscriptions.get(msg.params.subscriptionId);
+            if (off) {
+              subscriptions.delete(msg.params.subscriptionId);
+              off();
+            }
+            send(ws, msg.id, { closed: Boolean(off) });
             return;
           }
 

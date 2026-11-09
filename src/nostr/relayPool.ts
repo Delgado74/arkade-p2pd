@@ -17,6 +17,13 @@ interface PendingPublish {
   timer: NodeJS.Timeout;
 }
 
+interface QueryState {
+  events: Map<string, Event>;
+  pending: Set<string>;
+  timer: NodeJS.Timeout;
+  resolve: (events: Event[]) => void;
+}
+
 interface RelayState {
   url: string;
   socket: WS | null;
@@ -70,6 +77,8 @@ export class RelayPool {
   private relays = new Map<string, RelayState>();
   private seen = new Set<string>();
   private seenOrder: string[] = [];
+  private queries = new Map<string, QueryState>();
+  private querySeq = 0;
   private readonly backoffBase: number;
   private readonly backoffMax: number;
   private readonly publishTimeout: number;
@@ -112,6 +121,7 @@ export class RelayPool {
   /** Close every socket and cancel reconnects. */
   close(): void {
     this.stopped = true;
+    for (const subId of [...this.queries.keys()]) this.finishQuery(subId);
     for (const state of this.relays.values()) {
       state.closed = true;
       if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
@@ -211,6 +221,71 @@ export class RelayPool {
     });
   }
 
+  /**
+   * One-shot query across every connected relay.
+   *
+   * Unlike {@link subscribe}, results are not passed through the global
+   * deduplication set: a query must see events that a long-lived subscription
+   * already observed. Duplicates across relays are collapsed within the query.
+   */
+  async query(filters: Filter[], timeoutMs = 8_000): Promise<Event[]> {
+    if (!(await this.waitForConnection(Math.min(timeoutMs, 5_000)))) {
+      throw new Error("no connected relays");
+    }
+    const targets = [...this.relays.values()].filter(
+      (state) => state.connected && state.socket,
+    );
+    if (targets.length === 0) throw new Error("no connected relays");
+
+    const subId = `query:${++this.querySeq}`;
+    return new Promise<Event[]>((resolve) => {
+      const state: QueryState = {
+        events: new Map(),
+        pending: new Set(targets.map((target) => target.url)),
+        timer: setTimeout(() => this.finishQuery(subId), timeoutMs),
+        resolve,
+      };
+      this.queries.set(subId, state);
+      for (const target of targets) {
+        try {
+          target.socket?.send(JSON.stringify(["REQ", subId, ...filters]));
+        } catch {
+          state.pending.delete(target.url);
+        }
+      }
+      if (state.pending.size === 0) this.finishQuery(subId);
+    });
+  }
+
+  private finishQuery(subId: string): void {
+    const state = this.queries.get(subId);
+    if (!state) return;
+    this.queries.delete(subId);
+    clearTimeout(state.timer);
+    for (const relay of this.relays.values()) {
+      if (!relay.connected || !relay.socket) continue;
+      try {
+        relay.socket.send(JSON.stringify(["CLOSE", subId]));
+      } catch {
+        // Socket already gone; nothing to close.
+      }
+    }
+    state.resolve([...state.events.values()]);
+  }
+
+  private waitForConnection(timeoutMs: number): Promise<boolean> {
+    if (this.connected) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        if (this.connected) return resolve(true);
+        if (this.stopped || Date.now() - started >= timeoutMs) return resolve(false);
+        setTimeout(tick, 100);
+      };
+      tick();
+    });
+  }
+
   private connect(state: RelayState): void {
     if (this.stopped || state.closed) return;
     this.options.onStatus?.(state.url, "connecting");
@@ -283,8 +358,22 @@ export class RelayPool {
       const subId = message[1];
       const event = message[2];
       if (typeof subId !== "string" || !isEvent(event)) return;
+      const query = this.queries.get(subId);
+      if (query) {
+        if (!query.events.has(event.id)) query.events.set(event.id, event);
+        return;
+      }
       if (!this.markSeen(event.id)) return;
       this.options.onEvent?.(state.url, subId, event);
+      return;
+    }
+    if (type === "EOSE") {
+      const subId = message[1];
+      if (typeof subId !== "string") return;
+      const query = this.queries.get(subId);
+      if (!query) return;
+      query.pending.delete(state.url);
+      if (query.pending.size === 0) this.finishQuery(subId);
       return;
     }
     if (type === "OK") {

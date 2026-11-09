@@ -79,6 +79,12 @@ export class Nostr {
     };
   }
 
+  /** One-shot query across the pool, used by the client for feed reads. */
+  query(filters: Filter[], timeoutMs?: number): Promise<Event[]> {
+    if (!this.pool) throw new Error("nostr not started");
+    return this.pool.query(filters, timeoutMs);
+  }
+
   /**
    * Start persisting the identity's NIP-17 DMs. Called after the wallet is
    * unlocked; replacing the subscription when the identity changes keeps a
