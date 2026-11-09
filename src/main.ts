@@ -28,7 +28,7 @@ async function main() {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 
-  const trading = new Trading(db);
+  const trading = new Trading(db, nostr, wallet);
   await trading.start();
 
   const recovery = new Recovery(db);

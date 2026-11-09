@@ -1,6 +1,14 @@
 import type { Db } from "../db/index.js";
-import { listMessages, listOperations, type OperationRecord } from "../db/index.js";
-import { decodeTradeEnvelope, type TradeEnvelope } from "./protocol.js";
+import {
+  getEscrow,
+  listMessages,
+  listOperations,
+  recordMessage,
+  type OperationRecord,
+} from "../db/index.js";
+import type { Nostr } from "../nostr/index.js";
+import type { Wallet } from "../wallet/index.js";
+import { decodeTradeEnvelope, TRADE_APP, TRADE_VERSION, type TradeEnvelope } from "./protocol.js";
 import {
   computeWindowState,
   type TradeWindowEntry,
@@ -48,9 +56,12 @@ export class Trading {
   private timer: NodeJS.Timeout | null = null;
   private statuses = new Map<string, TradeStatus>();
   private loggedExpired = new Set<string>();
+  private sending = false;
 
   constructor(
     private db?: Db,
+    private nostr?: Nostr,
+    private wallet?: Wallet,
     private intervalMs = DEFAULT_INTERVAL_MS,
   ) {}
 
@@ -113,7 +124,97 @@ export class Trading {
       if (!next.has(orderId)) this.loggedExpired.delete(orderId);
     }
     this.statuses = next;
+    void this.resume(operations, entriesByOrder, now);
     return this.status();
+  }
+
+  /**
+   * Resume the one daemon-owned step that needs no new signatures: when this
+   * identity is the seller and the escrow is funded but no `funded` message is
+   * persisted, re-announce it to the buyer. This makes a reload or a closed
+   * browser recover the trade without the UI.
+   */
+  private async resume(
+    operations: OperationRecord[],
+    entriesByOrder: Map<string, TradeWindowEntry[]>,
+    now: number,
+  ): Promise<void> {
+    if (!this.db || !this.nostr || !this.wallet || this.sending) return;
+    const db = this.db;
+    const nostr = this.nostr;
+    const wallet = this.wallet;
+    this.sending = true;
+    try {
+      let identity: { pk: string };
+      try {
+        identity = wallet.getIdentity();
+      } catch {
+        // Wallet locked: nothing to resume until the user unlocks it.
+        return;
+      }
+
+      for (const operation of operations) {
+        if (operation.role !== "seller") continue;
+        const entries = entriesByOrder.get(operation.orderId) ?? [];
+        if (entries.some((entry) => entry.type === "funded")) continue;
+
+        const escrow = getEscrow(db, operation.orderId);
+        if (
+          !escrow ||
+          !escrow.vtxoTxid ||
+          escrow.vtxoVout === undefined ||
+          !escrow.fundedSats ||
+          (escrow.state !== "pending" && escrow.state !== "spendable")
+        ) {
+          continue;
+        }
+        const recipient = operation.counterparty;
+        if (!recipient) continue;
+
+        const content = JSON.stringify({
+          app: TRADE_APP,
+          v: TRADE_VERSION,
+          type: "funded",
+          orderId: operation.orderId,
+          role: "seller",
+          from: identity.pk,
+          ts: now,
+          payload: {
+            txid: escrow.vtxoTxid,
+            vout: escrow.vtxoVout,
+            amount: escrow.fundedSats,
+          },
+        });
+
+        try {
+          const wraps = wallet.wrapDm(recipient, content);
+          await Promise.all(wraps.map((wrap) => nostr.publish(wrap)));
+          const id = wraps[wraps.length - 1]?.id;
+          if (id) {
+            recordMessage(db, id, {
+              type: "dm",
+              orderId: operation.orderId,
+              peer: recipient,
+              outgoing: true,
+              createdAt: now,
+              receivedAt: now,
+              payloadJson: JSON.stringify({
+                sender: identity.pk,
+                recipients: [recipient],
+                content,
+                createdAt: now,
+              }),
+            });
+          }
+          console.log(`[trading] resumed funded announcement for ${operation.orderId}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[trading] could not resume ${operation.orderId}:`, message);
+        }
+      }
+    } finally {
+      this.sending = false;
+    }
   }
 
   private logTransition(status: TradeStatus): void {
